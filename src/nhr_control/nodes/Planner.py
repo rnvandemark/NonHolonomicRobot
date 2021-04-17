@@ -20,12 +20,11 @@ GRID_O = int(360 / BOARD_O)
 DEG2RAD = PI / 180
 
 # Board Obstacles
-quads = [[36.53, 124.38, 48, 108, 170.87, 194.04, 159.40, 210.42],
-         [200,280,200,230,210,230,210,280],
-         [210,280,210,270,230,270,230,280],
-         [210,240,210,230,230,230,230,240]]
-elips = [[90, 70, 35, 35],
-         [246, 145, 60, 30]]
+quads = [[2.5, 57.5, 2.5, 42.5, 17.5, 42.5, 17.5, 57.5],
+         [37.5, 57.5, 37.5, 42.5, 62.5, 42.5, 62.5, 57.5],
+         [72.5, 40, 72.5, 20, 87.5, 20, 87.5, 40]]
+elips = [[20, 20, 10, 10],
+         [20, 80, 10, 10]]
 
 
 def quad_check(x0, y0, quad):
@@ -84,32 +83,32 @@ def elip_check(x0, y0, elip):
         return False  # point is in obstacle space
     else:
         return True  # point is not in obstacle space
-    
 
-def setup_graph(robot_radius, clearance, point_robot = True):
-    obst = np.ones((BOARD_H,BOARD_W))
-    for x in range(BOARD_W):
-        for y in range(BOARD_H):
+
+def setup_graph(clearance, point_robot = True):
+    obst = np.ones((GRID_H,GRID_W))
+    for x in range(GRID_W):
+        for y in range(GRID_H):
             for quad in quads:  # check quads
                 if not quad_check(x, y, quad):  # see if point is near the quad
-                    obst[BOARD_H-y, x] = 0
+                    obst[GRID_H-y, x] = 0
                     break
     
             for elip in elips:  # check elips
                 if not elip_check(x, y, elip):  # see if point is near the elip
-                    obst[BOARD_H-y, x] = 0
+                    obst[GRID_H-y, x] = 0
                     break
                 
-    if not point_robot:  # used to override the expansion for the vizualization step
+    if not point_robot:  # used to override the expansion for the visualization step
         return obst
                        
-    newObst = np.ones((BOARD_H,BOARD_W))  # create new obstacle array that will have r
-    r = robot_radius + clearance  # point robot radius
-    for x in range(BOARD_W):
-        for y in range(BOARD_H):
+    newObst = np.ones((GRID_H,GRID_W))  # create new obstacle array that will have r
+    r = GRID_ROBOT_RADIUS + clearance  # point robot radius
+    for x in range(GRID_W):
+        for y in range(GRID_H):
             for i in range(x-r, x+r):  # window each pixel and check for an obstacle in radius
                 for j in range(y-r, y+r):
-                    if i >= 0 and j >= 0 and i < BOARD_W and j < BOARD_H:  # makes sure point is within bounds
+                    if 0 <= i < GRID_W and 0 <= j < GRID_H:  # makes sure point is within bounds
                         if obst[j, i] == 0 and sqrt((x-i)**2+(y-j)**2) < r:  # if window point is in obstacle
                             newObst[y, x] = 0
                             break
