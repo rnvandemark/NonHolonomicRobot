@@ -6,18 +6,20 @@ import cv2
 import numpy as np
 from math import sqrt, cos, sin, pi as PI
 from Cost import cost
+from sys import stdout
 
 ROS_NODE_NAME = "nhr_planner"
 
 BOARD_H = 10
 BOARD_W = 10
 BOARD_O = 30
+ROBOT_RADIUS = 0.153
 
-GRID_H = BOARD_H * 10
-GRID_W = BOARD_W * 10
+GRID_D = 10
+GRID_H = BOARD_H * GRID_D
+GRID_W = BOARD_W * GRID_D
 GRID_O = int(360 / BOARD_O)
-
-DEG2RAD = PI / 180
+GRID_ROBOT_RADIUS = ROBOT_RADIUS * GRID_D
 
 # Board Obstacles
 quads = [[2.5, 57.5, 2.5, 42.5, 17.5, 42.5, 17.5, 57.5],
@@ -26,6 +28,9 @@ quads = [[2.5, 57.5, 2.5, 42.5, 17.5, 42.5, 17.5, 57.5],
 elips = [[20, 20, 10, 10],
          [20, 80, 10, 10]]
 
+def printr(text):
+    stdout.write("\r" + text)
+    stdout.flush()
 
 def quad_check(x0, y0, quad):
     # extract coords out of quad list
@@ -103,7 +108,7 @@ def setup_graph(clearance, point_robot = True):
         return obst
                        
     newObst = np.ones((GRID_H,GRID_W))  # create new obstacle array that will have r
-    r = GRID_ROBOT_RADIUS + clearance  # point robot radius
+    r = int(round(GRID_ROBOT_RADIUS + clearance))  # point robot radius
     for x in range(GRID_W):
         for y in range(GRID_H):
             for i in range(x-r, x+r):  # window each pixel and check for an obstacle in radius
@@ -122,19 +127,16 @@ def setup_graph(clearance, point_robot = True):
 # A single state of the maze's search
 class MazeVertexNode(object):
 
-    # The multiplier for the wheel speeds used in WHEEL_SPEEDS_TO_NEIGHBORS
-    WHEEL_SPEED_MAGNITUDE = 50
-
     # The wheel speeds that can be used to get to neighbors, in (L,R) pairs
     WHEEL_SPEEDS_TO_NEIGHBORS = (
-        (0,                       WHEEL_SPEED_MAGNITUDE  ),
-        (0,                       2*WHEEL_SPEED_MAGNITUDE),
-        (WHEEL_SPEED_MAGNITUDE,   2*WHEEL_SPEED_MAGNITUDE),
-        (WHEEL_SPEED_MAGNITUDE,   WHEEL_SPEED_MAGNITUDE  ),
-        (2*WHEEL_SPEED_MAGNITUDE, 2*WHEEL_SPEED_MAGNITUDE),
-        (WHEEL_SPEED_MAGNITUDE,   0                      ),
-        (2*WHEEL_SPEED_MAGNITUDE, 0                      ),
-        (2*WHEEL_SPEED_MAGNITUDE, WHEEL_SPEED_MAGNITUDE  )
+        (0, 1),
+        (0, 2),
+        (1, 2),
+        (1, 1),
+        (2, 2),
+        (1, 0),
+        (2, 0),
+        (2, 1)
     )
 
     # The parent MazeVertexNode to this instance
@@ -191,9 +193,13 @@ class Maze(object):
     # The DiscreteGraph representation of the maze
     obst = None
 
+    # The wheel speed multiplier
+    wheel_speed_magnitude = None
+
     # Build the graph with the list of semi-algebraic models
-    def __init__(self, robot_radius, clearance):
-        self.obst = setup_graph(robot_radius, clearance)  # creates the obstacle space. 0 for obstacle, 1 for open space
+    def __init__(self, clearance, wheel_speed_magnitude):
+        self.obst = setup_graph(clearance)  # creates the obstacle space. 0 for obstacle, 1 for open space
+        self.wheel_speed_magnitude = wheel_speed_magnitude
 
     # Determine if a coordinate pair is in a traversable portion of the maze
     def is_in_board(self, j, i):
@@ -209,21 +215,19 @@ class Maze(object):
         return self.dist(n, goal)
 
     # Run A* between a start and goal point, using a forward step length
-    def astar(self, start, goal, step):
-        start = start[0]*2, start[1]*2, start[2]
-        goal = goal[0]*2, goal[1]*2, goal[2]
+    def astar(self, start, goal):
         link_node_indices = {}
         prev_n = None
         for j in range(GRID_H):
             for i in range(GRID_W):
-                if self.is_in_board(int(j/2), int(i/2)):
+                if self.is_in_board(j, i):
                     for o in range(GRID_O):
                         v = (j,i,o)
                         if v != start:
                             n = DoublyLinkNode(MazeVertexNode(None, v, 999999999, 999999999), prev_n)
                             link_node_indices[v] = n
                             prev_n = n
-            print "\r  - building initial priority queue for A*: {0}/{1}".format(j+1, GRID_H)
+            printr("  - building initial priority queue for A*: {0}/{1}".format(j+1, GRID_H))
         print
         start_node = DoublyLinkNode(MazeVertexNode(None, start, 0, self.h(start, goal)), prev_n)
         link_node_indices[start] = start_node
@@ -244,7 +248,7 @@ class Maze(object):
             del link_node_indices[np]
 
             # Check if this is the goal position
-            if self.dist(np, goal) <= 1.5*step:
+            if self.dist(np, goal) <= 2:
                 final_node = node.vertex_node
                 continue
 
@@ -253,11 +257,11 @@ class Maze(object):
 
             # Get each of the neighbors of this node by looping through the five possible actions
             nj, ni, orientation = np
-            for Ul,Ur in MazeVertexNode.WHEEL_SPEEDS_TO_NEIGHBORS:
-                ii, jj, ori, nD = cost(ni, nj, orientation, Ul, Ur)
+            for Uln,Urn in MazeVertexNode.WHEEL_SPEEDS_TO_NEIGHBORS:
+                ii, jj, ori, nD = cost(ni, nj, orientation*BOARD_O, Uln*self.wheel_speed_magnitude, Urn*self.wheel_speed_magnitude)
                 ii = int(ii)
                 jj = int(jj)
-                ori = ori // BOARD_O
+                ori = (int(ori) % 360) // BOARD_O
                 neighbor = (jj,ii,ori)
 
                 neighbor_node = link_node_indices.get(neighbor, None)
@@ -301,13 +305,14 @@ class Maze(object):
             # Add this position as having visited each of these neighbors
             nodes_visited.append(((ni, nj), neighbors_explored))
             pxidx = pxidx + 1
-            print "\rVisited {0}".format(pxidx)
+            printr("Visited {0}".format(pxidx))
 
             # Continue to the next node
             node_to_visit = node_to_visit.link_parent
             node_to_visit.link_child = None
 
         # If there's no path, the final_node will be null, but nodes_visited could still have content
+        print
         return final_node, nodes_visited
 
 def main():
@@ -319,29 +324,18 @@ def main():
     try:
         s_str = raw_input("Enter the start position: ")
         s_comma = s_str.index(",")
-        s = int(s_str[:s_comma]), int(s_str[s_comma+1:]), 0
+        s = int(float(s_str[:s_comma])*GRID_D), int(float(s_str[s_comma+1:])*GRID_D), 0
     except:
-        print "Please enter the start position in \"y,x\" format, where y and x are integers."
+        print "Please enter the start position in \"y,x\" format, where y and x are numbers."
         return
 
     g = None
     try:
         g_str = raw_input("Enter the goal position: ")
         g_comma = g_str.index(",")
-        g = int(g_str[:g_comma]), int(g_str[g_comma+1:]), 0
+        g = int(float(g_str[:g_comma])*GRID_D), int(float(g_str[g_comma+1:])*GRID_D), 0
     except:
-        print "Please enter the goal position in \"y,x\" format, where y and x are integers."
-        return
-
-    robot_radius = None
-    try:
-        r_str = raw_input("Enter the robot radius: ")
-        robot_radius = int(r_str)
-    except:
-        print "Please enter the robot radius as an integer."
-        return
-    if robot_radius <= 0:
-        print "Please enter the robot radius as a positive integer."
+        print "Please enter the goal position in \"y,x\" format, where y and x are numbers."
         return
 
     clearance = None
@@ -355,47 +349,60 @@ def main():
         print "Please enter the clearance as a non-negative integer."
         return
 
-    step = None
+    wheel_speed_magnitude = None
     try:
-        t_str = raw_input("Enter the robot movement step (integer between 1 and 10, inclusive): ")
-        step = int(t_str)
+        w_str = raw_input("Enter the wheel speed magnitude: ")
+        wheel_speed_magnitude = int(w_str)
     except:
-        print "Please enter an integer."
+        print "Please enter the robot radius as an integer."
         return
-    if (step < 1) or (step > 10):
-        print "Please enter an integer between 1 and 10, inclusive."
+    if wheel_speed_magnitude <= 0:
+        print "Please enter the robot radius as a positive integer."
         return
 
     vid_name = raw_input("Enter the name of the output file (no file extension, ex. 'output1'): ")
 
     # Build the maze and underlying graph object
     print "Starting maze generation..."
-    maze = Maze(robot_radius, clearance)
+    maze = Maze(clearance, wheel_speed_magnitude)
     # Check if they're traversable positions in the maze, continue if so
     if maze.is_in_board(s[0],s[1]) and maze.is_in_board(g[0],g[1]):
         # Do Dijkstra
         print "Done. Planning path..."
-        path_node, nodes_visited = maze.astar(s,g,step)
+        path_node, nodes_visited = maze.astar(s,g)
         print "Done (visited {0} positions). Starting render...".format(len(nodes_visited))
-        
-        scl = 4  # output video scale factor
+
+        ##############################################################
+        # TEMPORARY: print the nodes visited
+        # @Alec, feel free to delete me once you've gotten the new viz
+        path_node_copy = path_node
+        while True:
+            j, i, o = path_node_copy.position
+            print "{0},{1},{2}".format(j/float(GRID_D),i/float(GRID_D),o*BOARD_O)
+            path_node_copy = path_node_copy.parent
+            if path_node_copy is None:
+                break
+        ##############################################################
+
+        scl = 8  # output video scale factor
+        video_size = (GRID_W*scl, GRID_H*scl)
         # Build video writer to render the frames at 120 FPS
         vid_write = cv2.VideoWriter(
             "{0}.mp4".format(vid_name),
             cv2.VideoWriter_fourcc(*'mp4v'),
             30.0,
-            (BOARD_W*scl, BOARD_H*scl)
+            video_size
         )
         # Build image to be white and draw the obstacles
-        temp = np.uint8(setup_graph(robot_radius, clearance, point_robot = False))
+        temp = np.uint8(setup_graph(clearance, point_robot=False))
         temp *= 255
-        img = np.empty((BOARD_H,BOARD_W,3), dtype=np.uint8)
+        img = np.empty((GRID_H,GRID_W,3), dtype=np.uint8)
         img[:, :, 0] = temp
         img[:, :, 1] = temp
         img[:, :, 2] = temp
         img[s[:2]] = (0,255,0)
         img[g[0]-2:g[0]+2,g[1]-2:g[1]+2] = (0,0,255)
-        img = cv2.resize(img, (BOARD_W*scl, BOARD_H*scl), interpolation = cv2.INTER_NEAREST)
+        img = cv2.resize(img, video_size, interpolation=cv2.INTER_NEAREST)
 
         # Go through the pixels visited
         N = len(nodes_visited)
@@ -438,7 +445,7 @@ def main():
                 (0,0,255),
                 1
             )
-            for i in range(int(step/2)):
+            for i in range(10):
                 vid_write.write(img)
             path_node = path_node.parent
         vid_write.release()
