@@ -5,15 +5,16 @@ from geometry_msgs.msg import Twist
 import cv2
 import numpy as np
 from math import sqrt, cos, sin, pi as PI
+from Cost import cost
 
 ROS_NODE_NAME = "nhr_planner"
 
-BOARD_H = 300
-BOARD_W = 400
+BOARD_H = 10
+BOARD_W = 10
 BOARD_O = 30
 
-GRID_H = BOARD_H * 2
-GRID_W = BOARD_W * 2
+GRID_H = BOARD_H * 10
+GRID_W = BOARD_W * 10
 GRID_O = int(360 / BOARD_O)
 
 DEG2RAD = PI / 180
@@ -121,6 +122,21 @@ def setup_graph(robot_radius, clearance, point_robot = True):
 
 # A single state of the maze's search
 class MazeVertexNode(object):
+
+    # The multiplier for the wheel speeds used in WHEEL_SPEEDS_TO_NEIGHBORS
+    WHEEL_SPEED_MAGNITUDE = 50
+
+    # The wheel speeds that can be used to get to neighbors, in (L,R) pairs
+    WHEEL_SPEEDS_TO_NEIGHBORS = (
+        (0,                       WHEEL_SPEED_MAGNITUDE  ),
+        (0,                       2*WHEEL_SPEED_MAGNITUDE),
+        (WHEEL_SPEED_MAGNITUDE,   2*WHEEL_SPEED_MAGNITUDE),
+        (WHEEL_SPEED_MAGNITUDE,   WHEEL_SPEED_MAGNITUDE  ),
+        (2*WHEEL_SPEED_MAGNITUDE, 2*WHEEL_SPEED_MAGNITUDE),
+        (WHEEL_SPEED_MAGNITUDE,   0                      ),
+        (2*WHEEL_SPEED_MAGNITUDE, 0                      ),
+        (2*WHEEL_SPEED_MAGNITUDE, WHEEL_SPEED_MAGNITUDE  )
+    )
 
     # The parent MazeVertexNode to this instance
     parent = None
@@ -238,12 +254,11 @@ class Maze(object):
 
             # Get each of the neighbors of this node by looping through the five possible actions
             nj, ni, orientation = np
-            for o in range(orientation - 2, orientation + 3):
-                # Given the orientation 'coordinate', calculate theta and put in the bounds [0, 360)
-                ori = (o + GRID_O) % GRID_O
-                theta = ori * BOARD_O * DEG2RAD
-                jj = int(nj + (step * sin(theta)))
-                ii = int(ni + (step * cos(theta)))
+            for Ul,Ur in MazeVertexNode.WHEEL_SPEEDS_TO_NEIGHBORS:
+                ii, jj, ori, nD = cost(ni, nj, orientation, Ul, Ur)
+                ii = int(ii)
+                jj = int(jj)
+                ori = ori // BOARD_O
                 neighbor = (jj,ii,ori)
 
                 neighbor_node = link_node_indices.get(neighbor, None)
@@ -255,7 +270,7 @@ class Maze(object):
                 neighbors_explored.append((ii, jj))
 
                 # Calculate the adjusted distance
-                node_distG = node.vertex_node.distG + self.dist(np, neighbor)
+                node_distG = node.vertex_node.distG + nD
                 if node_distG < neighbor_node.vertex_node.distG:
                     # Set this node as this neighbor's shortest path
                     neighbor_node.remove_from_chain()
@@ -303,7 +318,7 @@ def main():
     # Capture required user input
     s = None
     try:
-        s_str = input("Enter the start position: ")
+        s_str = raw_input("Enter the start position: ")
         s_comma = s_str.index(",")
         s = int(s_str[:s_comma]), int(s_str[s_comma+1:]), 0
     except:
@@ -312,7 +327,7 @@ def main():
 
     g = None
     try:
-        g_str = input("Enter the goal position: ")
+        g_str = raw_input("Enter the goal position: ")
         g_comma = g_str.index(",")
         g = int(g_str[:g_comma]), int(g_str[g_comma+1:]), 0
     except:
@@ -321,7 +336,7 @@ def main():
 
     robot_radius = None
     try:
-        r_str = input("Enter the robot radius: ")
+        r_str = raw_input("Enter the robot radius: ")
         robot_radius = int(r_str)
     except:
         print "Please enter the robot radius as an integer."
@@ -332,7 +347,7 @@ def main():
 
     clearance = None
     try:
-        c_str = input("Enter the clearance: ")
+        c_str = raw_input("Enter the clearance: ")
         clearance = int(c_str)
     except:
         print "Please enter the clearance as an integer."
@@ -343,7 +358,7 @@ def main():
 
     step = None
     try:
-        t_str = input("Enter the robot movement step (integer between 1 and 10, inclusive): ")
+        t_str = raw_input("Enter the robot movement step (integer between 1 and 10, inclusive): ")
         step = int(t_str)
     except:
         print "Please enter an integer."
@@ -352,7 +367,7 @@ def main():
         print "Please enter an integer between 1 and 10, inclusive."
         return
 
-    vid_name = input("Enter the name of the output file (no file extension, ex. 'output1'): ")
+    vid_name = raw_input("Enter the name of the output file (no file extension, ex. 'output1'): ")
 
     # Build the maze and underlying graph object
     print "Starting maze generation..."

@@ -11,6 +11,6 @@ catkin_package(
 )
 
 catkin_install_python(
-  PROGRAMS nodes/Planner.py
+  PROGRAMS nodes/Planner.py scripts/Cost.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
