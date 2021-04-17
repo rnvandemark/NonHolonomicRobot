@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 
 import rospy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Pose2D
+from nhr_msgs.msg import PlanRequest, NeighborsPose2D, BacktrackNode, MoveCommand, Path
 import cv2
 import numpy as np
 from math import sqrt, cos, sin, pi as PI
 from Cost import cost
-from sys import stdout
+from sys import stdout, argv as sargv
+from gc import collect as gc_collect
 
 ROS_NODE_NAME = "nhr_planner"
 
@@ -151,12 +153,16 @@ class MazeVertexNode(object):
     # The current tentative distance from this node to the goal, given some heuristic
     distF = None
 
+    # The wheel speeds and time duration used to visit this node (dt, theta_l, theta_r)
+    twist_elements_to_here = None
+
     # Constructor, given all values
     def __init__(self, parent, position, distG, distF):
         self.parent = parent
         self.position = position
         self.distG = distG
         self.distF = distF
+        self.twist_elements_to_here = (0,0,0)
 
 # A link in a priorty queue chain
 class DoublyLinkNode(object):
@@ -227,8 +233,6 @@ class Maze(object):
                             n = DoublyLinkNode(MazeVertexNode(None, v, 999999999, 999999999), prev_n)
                             link_node_indices[v] = n
                             prev_n = n
-            printr("  - building initial priority queue for A*: {0}/{1}".format(j+1, GRID_H))
-        print
         start_node = DoublyLinkNode(MazeVertexNode(None, start, 0, self.h(start, goal)), prev_n)
         link_node_indices[start] = start_node
 
@@ -240,7 +244,7 @@ class Maze(object):
 
         # Start the main part of the algorithm, tracking the node that can be used to recover the path
         final_node = None
-        pxidx = 0
+        idx = 0
         while (final_node is None) and (node_to_visit != None):
             # Essentially, mark this node as "visited" and capture its position
             node = node_to_visit
@@ -258,7 +262,9 @@ class Maze(object):
             # Get each of the neighbors of this node by looping through the five possible actions
             nj, ni, orientation = np
             for Uln,Urn in MazeVertexNode.WHEEL_SPEEDS_TO_NEIGHBORS:
-                ii, jj, ori, nD = cost(ni, nj, orientation*BOARD_O, Uln*self.wheel_speed_magnitude, Urn*self.wheel_speed_magnitude)
+                Ul = Uln*self.wheel_speed_magnitude
+                Ur = Urn*self.wheel_speed_magnitude
+                ii, jj, ori, nD, dt = cost(ni, nj, orientation*BOARD_O, Ul, Ur)
                 ii = int(ii)
                 jj = int(jj)
                 ori = (int(ori) % 360) // BOARD_O
@@ -269,8 +275,11 @@ class Maze(object):
                     # This node was already visited and removed, continue to the next neighbor
                     continue
 
+                # (Re)set the twist elements used to get here
+                neighbor_node.vertex_node.twist_elements_to_here = (Ul, Ur, dt)
+
                 # Add the position of this neighbor to visualize later
-                neighbors_explored.append((ii, jj))
+                neighbors_explored.append(Pose2D(x=ii, y=jj, theta=ori*BOARD_O))
 
                 # Calculate the adjusted distance
                 node_distG = node.vertex_node.distG + nD
@@ -303,44 +312,80 @@ class Maze(object):
                             potential_new_link_parent = potential_new_link_parent.link_parent
 
             # Add this position as having visited each of these neighbors
-            nodes_visited.append(((ni, nj), neighbors_explored))
-            pxidx = pxidx + 1
-            printr("Visited {0}".format(pxidx))
+            nodes_visited.append(NeighborsPose2D(
+                position=Pose2D(x=ni, y=nj, theta=orientation*BOARD_O),
+                neighbors=neighbors_explored
+            ))
+            idx = idx + 1
+            printr("Planning{0}".format("." * (idx // 2000)))
 
             # Continue to the next node
             node_to_visit = node_to_visit.link_parent
             node_to_visit.link_child = None
 
-        # If there's no path, the final_node will be null, but nodes_visited could still have content
         print
         return final_node, nodes_visited
 
-def main():
-    # Init ROS elements
-    rospy.init_node(ROS_NODE_NAME)
+def handle_plan_request(msg, maze, pub):
+    path_msg = Path()
+    path_msg.success = False
+    path_msg.request = msg
 
-    # Capture required user input
+    valid_inputs = True
+
     s = None
     try:
-        s_str = raw_input("Enter the start position: ")
-        s_comma = s_str.index(",")
-        s = int(float(s_str[:s_comma])*GRID_D), int(float(s_str[s_comma+1:])*GRID_D), 0
+        s = int(msg.init_position.y*GRID_D), int(msg.init_position.x*GRID_D), 0
     except:
         print "Please enter the start position in \"y,x\" format, where y and x are numbers."
-        return
+        valid_inputs = False
 
     g = None
     try:
-        g_str = raw_input("Enter the goal position: ")
-        g_comma = g_str.index(",")
-        g = int(float(g_str[:g_comma])*GRID_D), int(float(g_str[g_comma+1:])*GRID_D), 0
+        g = int(msg.final_position.y*GRID_D), int(msg.final_position.x*GRID_D), 0
     except:
         print "Please enter the goal position in \"y,x\" format, where y and x are numbers."
-        return
+        valid_inputs = False
+
+    if valid_inputs and maze.is_in_board(s[0], s[1]) and maze.is_in_board(g[0], g[1]):
+        print "Running A* with {0} => {1}...".format(s, g)
+        final_node, nodes_visited = maze.astar(s,g)
+        print "Finished, visited {0}".format(len(nodes_visited))
+
+        backtrack_path = []
+        n = final_node
+        while n is not None:
+            backtrack_path.append(BacktrackNode(
+                position=Pose2D(x=n.position[1], y=n.position[0], theta=n.position[2]*BOARD_O),
+                has_move_cmd=(n.parent is not None),
+                move_cmd=MoveCommand(
+                    left_wheel_speed=n.twist_elements_to_here[0],
+                    right_wheel_speed=n.twist_elements_to_here[1],
+                    time_elapsed=n.twist_elements_to_here[2]
+                )
+            ))
+            n = n.parent
+
+        path_msg.success = (final_node is not None)
+        path_msg.explored = nodes_visited
+        path_msg.backtrack_path = backtrack_path
+#        visualize(final_node, nodes_visited)
+    else:
+        print "Failed to run A* with {0} => {1}".format(s, g)
+
+    pub.publish(path_msg)
+
+def cleanly_handle_plan_request(msg, maze, pub):
+    handle_plan_request(msg, maze, pub)
+    gc_collect()
+
+def main():
+    # Capture required user input
+    assert(len(sargv) == 3)
+    c_str, w_str = sargv[1:]
 
     clearance = None
     try:
-        c_str = raw_input("Enter the clearance: ")
         clearance = int(c_str)
     except:
         print "Please enter the clearance as an integer."
@@ -351,7 +396,6 @@ def main():
 
     wheel_speed_magnitude = None
     try:
-        w_str = raw_input("Enter the wheel speed magnitude: ")
         wheel_speed_magnitude = int(w_str)
     except:
         print "Please enter the robot radius as an integer."
@@ -360,98 +404,25 @@ def main():
         print "Please enter the robot radius as a positive integer."
         return
 
-    vid_name = raw_input("Enter the name of the output file (no file extension, ex. 'output1'): ")
-
     # Build the maze and underlying graph object
     print "Starting maze generation..."
     maze = Maze(clearance, wheel_speed_magnitude)
-    # Check if they're traversable positions in the maze, continue if so
-    if maze.is_in_board(s[0],s[1]) and maze.is_in_board(g[0],g[1]):
-        # Do Dijkstra
-        print "Done. Planning path..."
-        path_node, nodes_visited = maze.astar(s,g)
-        print "Done (visited {0} positions). Starting render...".format(len(nodes_visited))
+    print "Done, waiting for path planning requests."
 
-        ##############################################################
-        # TEMPORARY: print the nodes visited
-        # @Alec, feel free to delete me once you've gotten the new viz
-        path_node_copy = path_node
-        while True:
-            j, i, o = path_node_copy.position
-            print "{0},{1},{2}".format(j/float(GRID_D),i/float(GRID_D),o*BOARD_O)
-            path_node_copy = path_node_copy.parent
-            if path_node_copy is None:
-                break
-        ##############################################################
-
-        scl = 8  # output video scale factor
-        video_size = (GRID_W*scl, GRID_H*scl)
-        # Build video writer to render the frames at 120 FPS
-        vid_write = cv2.VideoWriter(
-            "{0}.mp4".format(vid_name),
-            cv2.VideoWriter_fourcc(*'mp4v'),
-            30.0,
-            video_size
-        )
-        # Build image to be white and draw the obstacles
-        temp = np.uint8(setup_graph(clearance, point_robot=False))
-        temp *= 255
-        img = np.empty((GRID_H,GRID_W,3), dtype=np.uint8)
-        img[:, :, 0] = temp
-        img[:, :, 1] = temp
-        img[:, :, 2] = temp
-        img[s[:2]] = (0,255,0)
-        img[g[0]-2:g[0]+2,g[1]-2:g[1]+2] = (0,0,255)
-        img = cv2.resize(img, video_size, interpolation=cv2.INTER_NEAREST)
-
-        # Go through the pixels visited
-        N = len(nodes_visited)
-        for i in range(N):
-            conn = nodes_visited[i]
-            src = conn[0]
-            for dest in conn[1]:
-                img = cv2.line(
-                    img,
-                    (int(src[0]/2*scl), int(src[1]/2*scl)),
-                    (int(dest[0]/2*scl), int(dest[1]/2*scl)),
-                    (255,120,120),
-                    1
-                )
-            
-            # ramp up video search speed
-            if i<900 and i<N/100 and i%10==0:
-                vid_write.write(img)
-            elif i<N/10 and i%300==0:
-                vid_write.write(img)
-            elif i%1000 or i==N-1:
-                vid_write.write(img)
-            
-        # Draw the final path
-        img = cv2.line(
-            img,
-            (int(path_node.position[1]/2*scl), int(path_node.position[0]/2*scl)),
-            (int(path_node.parent.position[1]/2*scl), int(path_node.parent.position[0]/2*scl)),
-            (0,0,255),
-            1
-        )
-        for i in range(10):
-            vid_write.write(img)
-        path_node = path_node.parent
-        while path_node.parent is not None:
-            img = cv2.line(
-                img,
-                (int(path_node.position[1]/2*scl), int(path_node.position[0]/2*scl)),
-                (int(path_node.parent.position[1]/2*scl), int(path_node.parent.position[0]/2*scl)),
-                (0,0,255),
-                1
-            )
-            for i in range(10):
-                vid_write.write(img)
-            path_node = path_node.parent
-        vid_write.release()
-        print "Finished."
-    else:
-        print "Either the start {0} or the goal {1} was not valid.".format(s, g)
+    # Init ROS elements
+    rospy.init_node(ROS_NODE_NAME)
+    path_pub = rospy.Publisher(
+        "/nhr/path",
+        Path,
+        queue_size=1
+    )
+    plan_request_sub = rospy.Subscriber(
+        "/nhr/plan_request",
+        PlanRequest,
+        lambda m: cleanly_handle_plan_request(m, maze, path_pub),
+        queue_size=1
+    )
+    rospy.spin()
 
 if __name__ == "__main__":
     main()

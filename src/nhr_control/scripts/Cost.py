@@ -22,4 +22,4 @@ def cost(Xi,Yi,Thetai,UL,UR):
         D += math.sqrt(dXn**2 + dYn**2)
         t += dt
     Thetan = 180 * Thetan / math.pi
-    return Xn, Yn, Thetan, D
+    return Xn, Yn, Thetan, D, t
