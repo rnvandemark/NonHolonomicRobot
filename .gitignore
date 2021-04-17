@@ -1,0 +1,10 @@
+# Exclude top-level CMake
+src/CMakeLists.txt
+
+# Exclude typical build products
+build/
+install/
+devel/
+
+# Exclude PyCharm products
+.idea/
