@@ -8,7 +8,13 @@ from time import sleep
 
 ROS_NODE_NAME = "nhr_plan_requester"
 
-def handle_path(msg):
+def get_rosparam(name):
+    value = None
+    if rospy.has_param(name):
+        value = rospy.get_param(name)
+    return value
+
+def handle_path(msg, wheel_radius, lateral_separation):
     print " => ".join("({0},{1},{2})".format(p.position.y,p.position.x,p.position.theta) for p in msg.backtrack_path)
     move_commands = [p.move_cmd for p in reversed(msg.backtrack_path) if p.has_move_cmd]
     for cmd in move_commands:
@@ -35,6 +41,9 @@ def main():
 
     # Init ROS elements
     rospy.init_node(ROS_NODE_NAME)
+    robot_r = get_rosparam("/nhr/robot_description/r")
+    robot_L = get_rosparam("/nhr/robot_description/L")
+    assert((robot_r != None) and (robot_L != None))
     path_pub = rospy.Publisher(
         "/nhr/plan_request",
         PlanRequest,
@@ -43,7 +52,7 @@ def main():
     path_sub = rospy.Subscriber(
         "/nhr/path",
         Path,
-        handle_path,
+        lambda m: handle_path(m, robot_r, robot_L),
         queue_size=1
     )
 
