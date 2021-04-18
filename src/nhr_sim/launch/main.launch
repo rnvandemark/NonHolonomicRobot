@@ -3,8 +3,6 @@
   <arg name="do_viz" default="0" />
 
   <arg name="clearance" default="0" />
-  <arg name="minor_wheel_speed" default="50" />
-  <arg name="major_wheel_speed" default="100" />
 
   <arg name="tb_model" default="burger" />
   <arg name="tb_pos_x" default="0.0"/>
@@ -35,7 +33,7 @@
     name="nhr_planner"
     pkg="nhr_control"
     type="Planner.py"
-    args="$(arg clearance) $(arg minor_wheel_speed) $(arg major_wheel_speed)"
+    args="$(arg clearance)"
     output="screen" />
   <node
     name="spawn_turtlebot_urdf"

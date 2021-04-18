@@ -27,16 +27,25 @@ def handle_path(msg, wheel_radius, lateral_separation):
 def main():
     # Capture required user input
     my_sargv = rospy.myargv(argv=sargv)
-    assert(len(my_sargv) == 5)
+    assert(len(my_sargv) == 7)
 
-    ii = None; ij = None; fi = None; fj = None
+    ii = None; ij = None; fi = None; fj = None; w1 = None; w2 = None
     try:
         ii = float(my_sargv[1])
         ij = float(my_sargv[2])
         fi = float(my_sargv[3])
         fj = float(my_sargv[4])
     except:
-        print "Inputs must be numbers."
+        print "Input coordinates must be numbers."
+        return
+    try:
+        w1 = int(my_sargv[5])
+        w2 = int(my_sargv[6])
+    except:
+        print "Input wheel speeds must be positive integers."
+        return
+    if (w1 <= 0) or (w2 <= 0):
+        print "Input wheel speeds must be positive integers."
         return
 
     # Init ROS elements
@@ -61,7 +70,9 @@ def main():
     sleep(sleep_time_s)
     path_pub.publish(PlanRequest(
         init_position=Pose2D(x=ii, y=ij, theta=0),
-        final_position=Pose2D(x=fi, y=fj, theta=0)
+        final_position=Pose2D(x=fi, y=fj, theta=0),
+        wheel_speed_minor=w1,
+        wheel_speed_major=w2
     ))
     print "Plan request published."
     rospy.spin()

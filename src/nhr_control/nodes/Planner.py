@@ -234,8 +234,8 @@ class RobotDescription(object):
     L = None
 
     # Collect data about the robot
-    def __init__(self, wheel_speed_minor, wheel_speed_major, r, L):
-        self.wheel_speeds = (0, wheel_speed_minor, wheel_speed_major)
+    def __init__(self, r, L):
+        self.wheel_speeds = (0, 0, 0)
         self.r = r
         self.L = L
 
@@ -249,9 +249,9 @@ class Maze(object):
     robo_desc = None
 
     # Build the graph with the list of semi-algebraic models
-    def __init__(self, clearance, wheel_speed_minor, wheel_speed_major, r, L):
+    def __init__(self, clearance, r, L):
         self.obst = setup_graph(clearance)  # creates the obstacle space. 0 for obstacle, 1 for open space
-        self.robo_desc = RobotDescription(wheel_speed_minor, wheel_speed_major, r, L)
+        self.robo_desc = RobotDescription(r, L)
 
     # Determine if a coordinate pair is in a traversable portion of the maze
     def is_in_board(self, j, i):
@@ -267,7 +267,9 @@ class Maze(object):
         return self.dist(n, goal)
 
     # Run A* between a start and goal point, using a forward step length
-    def astar(self, start, goal):
+    def astar(self, start, goal, minor_wheel_speed, major_wheel_speed):
+        self.robo_desc.wheel_speeds = (0, minor_wheel_speed, major_wheel_speed)
+
         link_node_indices = {}
         prev_n = None
         for j in range(GRID_H):
@@ -399,7 +401,7 @@ def handle_plan_request(msg, maze, pub):
 
     if valid_inputs and maze.is_in_board(s[0], s[1]) and maze.is_in_board(g[0], g[1]):
         print "Running A* with {0} => {1}...".format(s, g)
-        final_node, nodes_visited = maze.astar(s,g)
+        final_node, nodes_visited = maze.astar(s,g,msg.wheel_speed_minor,msg.wheel_speed_major)
         print "Finished, visited {0}".format(len(nodes_visited))
 
         backtrack_path = []
@@ -432,29 +434,16 @@ def cleanly_handle_plan_request(msg, maze, pub):
 def main():
     # Capture required user input
     my_sargv = rospy.myargv(argv=sargv)
-    assert(len(my_sargv) == 4)
-    c_str, w1_str, w2_str = my_sargv[1:]
+    assert(len(my_sargv) == 2)
 
     clearance = None
     try:
-        clearance = int(c_str)
+        clearance = int(my_sargv[1])
     except:
         print "Please enter the clearance as an integer."
         return
     if clearance < 0:
         print "Please enter the clearance as a non-negative integer."
-        return
-
-    wheel_speed_minor = None
-    wheel_speed_major = None
-    try:
-        wheel_speed_minor = int(w1_str)
-        wheel_speed_major = int(w2_str)
-    except:
-        print "Please enter the wheel velocities as an integer."
-        return
-    if (wheel_speed_minor <= 0) or (wheel_speed_major <= 0):
-        print "Please enter the robot radius as a positive integer."
         return
 
     # Init ROS elements and get parameters
@@ -465,7 +454,7 @@ def main():
 
     # Build the maze and underlying graph object
     print "Starting maze generation..."
-    maze = Maze(clearance, wheel_speed_minor, wheel_speed_major, robot_r, robot_L)
+    maze = Maze(clearance, robot_r, robot_L)
     print "Done, waiting for path planning requests."
 
     # Init ROS pub and sub
