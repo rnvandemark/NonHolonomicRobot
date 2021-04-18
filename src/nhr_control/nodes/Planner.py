@@ -256,8 +256,8 @@ class Maze(object):
                 final_node = node.vertex_node
                 continue
 
-            # Track the neighbors of this node that were explored
-            neighbors_explored = []
+            # Track the moves used to explore the neighbors
+            moves_to_neighbors = []
 
             # Get each of the neighbors of this node by looping through the five possible actions
             nj, ni, orientation = np
@@ -279,7 +279,11 @@ class Maze(object):
                 neighbor_node.vertex_node.twist_elements_to_here = (Ul, Ur, dt)
 
                 # Add the position of this neighbor to visualize later
-                neighbors_explored.append(Pose2D(x=ii, y=jj, theta=ori*BOARD_O))
+                moves_to_neighbors.append(MoveCommand(
+                    left_wheel_speed=Ul,
+                    right_wheel_speed=Ur,
+                    time_elapsed=dt
+                ))
 
                 # Calculate the adjusted distance
                 node_distG = node.vertex_node.distG + nD
@@ -314,7 +318,7 @@ class Maze(object):
             # Add this position as having visited each of these neighbors
             nodes_visited.append(NeighborsPose2D(
                 position=Pose2D(x=ni, y=nj, theta=orientation*BOARD_O),
-                neighbors=neighbors_explored
+                moves_to_neighbors=moves_to_neighbors
             ))
             idx = idx + 1
             printr("Planning{0}".format("." * (idx // 2000)))
