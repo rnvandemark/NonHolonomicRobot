@@ -2,26 +2,55 @@
 
 import rospy
 from nhr_msgs.msg import PlanRequest, Path
-from geometry_msgs.msg import Pose2D
+from geometry_msgs.msg import Pose2D, Twist
 from sys import argv as sargv
-from time import sleep
+from math import sin, cos, pi as PI
 
 ROS_NODE_NAME = "nhr_plan_requester"
 
+# Get a ROS parameter from the server if it exists
 def get_rosparam(name):
     value = None
     if rospy.has_param(name):
         value = rospy.get_param(name)
     return value
 
-def handle_path(msg, wheel_radius, lateral_separation):
+# Helper function to convert from degrees to radians
+def deg2rad(deg):
+    return PI * deg / 180
+
+# Calculate the linear velocity of the bot in x and y
+def calc_lin_vel_yx(th, Ul, Ur, r):
+    dd = (r/2) * (Ul+Ur)
+    return dd*sin(th), dd*cos(th)
+
+# Calculate the angular twist of the bot
+def calc_ang_vel_z(Ul, Ur, r, L):
+    return (r/L) * (Ur-Ul)
+
+# Populate a twist message given motion of the wheels
+def get_twist_from(th, Ul, Ur, r, L):
+    twist = Twist()
+    dy, dx = calc_lin_vel_yx(th, Ul, Ur, r)
+    twist.linear.x = dx
+    twist.linear.y = dy
+    twist.angular.z = calc_ang_vel_z(Ul, Ur, r, L)
+    return twist
+
+# Publish a series of twist messages given a path to follow
+def handle_path(msg, wheel_radius, lateral_separation, twist_pub):
     print " => ".join("({0},{1},{2})".format(p.position.y,p.position.x,p.position.theta) for p in msg.backtrack_path)
-    move_commands = [p.move_cmd for p in reversed(msg.backtrack_path) if p.has_move_cmd]
-    for cmd in move_commands:
-        print "L:{0},R:{1}".format(cmd.left_wheel_speed, cmd.right_wheel_speed)
-        # Publish command with given wheel speeds
+    move_commands = [(deg2rad(p.position.theta),p.move_cmd) for p in reversed(msg.backtrack_path) if p.has_move_cmd]
+    for th,cmd in move_commands:
+        twist_pub.publish(get_twist_from(
+            th,
+            cmd.left_wheel_speed,
+            cmd.right_wheel_speed,
+            wheel_radius,
+            lateral_separation
+        ))
         rospy.sleep(cmd.time_elapsed)
-    # Publish 0 wheel speed command
+    twist_pub.publish(Twist())
     rospy.signal_shutdown("Received path, ready for clean shutdown.")
 
 def main():
@@ -58,16 +87,21 @@ def main():
         PlanRequest,
         queue_size=1
     )
+    cmd_vel_pub = rospy.Publisher(
+        "/cmd_vel",
+        Twist,
+        queue_size=1
+    )
     path_sub = rospy.Subscriber(
         "/nhr/path",
         Path,
-        lambda m: handle_path(m, robot_r, robot_L),
+        lambda m: handle_path(m, robot_r, robot_L, cmd_vel_pub),
         queue_size=1
     )
 
     sleep_time_s = 0.5
     print "First sleeping for {0} second(s)...".format(sleep_time_s)
-    sleep(sleep_time_s)
+    rospy.sleep(sleep_time_s)
     path_pub.publish(PlanRequest(
         init_position=Pose2D(x=ii, y=ij, theta=0),
         final_position=Pose2D(x=fi, y=fj, theta=0),
