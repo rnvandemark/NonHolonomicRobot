@@ -2,7 +2,9 @@
 
 import rospy
 from nhr_msgs.msg import PlanRequest, Path
-from geometry_msgs.msg import Pose2D, Twist
+from geometry_msgs.msg import Pose2D, Twist, Pose, Point, Quaternion
+from gazebo_msgs.msg import ModelState
+from gazebo_msgs.srv import SetModelState
 from sys import argv as sargv
 from math import sin, cos, pi as PI
 
@@ -38,9 +40,26 @@ def get_twist_from(th, Ul, Ur, r, L):
     return twist
 
 # Publish a series of twist messages given a path to follow
-def handle_path(msg, wheel_radius, lateral_separation, twist_pub):
+def handle_path(msg, wheel_radius, lateral_separation, gazebo_model_cli, twist_pub):
     print " => ".join("({0},{1},{2})".format(p.position.y,p.position.x,p.position.theta) for p in msg.backtrack_path)
     move_commands = [(deg2rad(p.position.theta),p.move_cmd) for p in reversed(msg.backtrack_path) if p.has_move_cmd]
+
+    srv_response = gazebo_model_cli(model_state=ModelState(
+        model_name="turtlebot3_burger",
+        pose=Pose(
+            position=Point(
+                x=(msg.request.init_position.x)-5, # Recenter
+                y=(msg.request.init_position.y)-5, # Recenter
+                z=0
+            ),
+            orientation=Quaternion(x=0,y=0,z=0,w=1) # Identity quaternion
+        ),
+        twist=Twist(),
+        reference_frame="world"
+    ))
+    assert(srv_response.success)
+    rospy.sleep(1)
+
     for th,cmd in move_commands:
         twist_pub.publish(get_twist_from(
             th,
@@ -82,6 +101,12 @@ def main():
     robot_r = get_rosparam("/nhr/robot_description/r")
     robot_L = get_rosparam("/nhr/robot_description/L")
     assert((robot_r != None) and (robot_L != None))
+
+    rospy.wait_for_service("/gazebo/set_model_state")
+    model_state_cli = rospy.ServiceProxy(
+        "/gazebo/set_model_state",
+        SetModelState
+    )
     path_pub = rospy.Publisher(
         "/nhr/plan_request",
         PlanRequest,
@@ -95,7 +120,7 @@ def main():
     path_sub = rospy.Subscriber(
         "/nhr/path",
         Path,
-        lambda m: handle_path(m, robot_r, robot_L, cmd_vel_pub),
+        lambda m: handle_path(m, robot_r, robot_L, model_state_cli, cmd_vel_pub),
         queue_size=1
     )
 

@@ -4,6 +4,7 @@ project(nhr_control)
 find_package(catkin REQUIRED COMPONENTS
   rospy
   geometry_msgs
+  gazebo_msgs
   nhr_msgs
 )
 
