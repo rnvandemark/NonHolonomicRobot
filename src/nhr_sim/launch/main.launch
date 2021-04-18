@@ -4,6 +4,7 @@
 
   <arg name="clearance" default="0" />
   <arg name="minor_wheel_speed" default="50" />
+  <arg name="major_wheel_speed" default="100" />
 
   <arg name="tb_model" default="burger" />
   <arg name="tb_pos_x" default="0.0"/>
@@ -25,11 +26,16 @@
     command="$(find xacro)/xacro --inorder $(find turtlebot3_description)/urdf/turtlebot3_$(arg tb_model).urdf.xacro"
     if="$(arg do_gazebo)" />
 
+  <rosparam>
+    /nhr/robot_description/r: 0.038
+    /nhr/robot_description/L: 0.354
+  </rosparam>
+
   <node
     name="nhr_planner"
     pkg="nhr_control"
     type="Planner.py"
-    args="$(arg clearance) $(arg minor_wheel_speed)"
+    args="$(arg clearance) $(arg minor_wheel_speed) $(arg major_wheel_speed)"
     output="screen" />
   <node
     name="spawn_turtlebot_urdf"

@@ -6,7 +6,6 @@ from nhr_msgs.msg import PlanRequest, NeighborsPose2D, BacktrackNode, MoveComman
 import cv2
 import numpy as np
 from math import sqrt, cos, sin, pi as PI
-from Cost import cost
 from sys import stdout, argv as sargv
 from gc import collect as gc_collect
 
@@ -29,6 +28,12 @@ quads = [[2.5, 57.5, 2.5, 42.5, 17.5, 42.5, 17.5, 57.5],
          [72.5, 40, 72.5, 20, 87.5, 20, 87.5, 40]]
 elips = [[20, 20, 10, 10],
          [20, 80, 10, 10]]
+
+def get_rosparam(name):
+    value = None
+    if rospy.has_param(name):
+        value = rospy.get_param(name)
+    return value
 
 def printr(text):
     stdout.write("\r" + text)
@@ -125,6 +130,29 @@ def setup_graph(clearance, point_robot = True):
             
     return newObst            
 
+# Xi, Yi, Thetai: Input point's coordinates
+# Xn, Yn, Thetan: End point coordintes
+# UL, UR: Left and rigth wheel velocities
+# r: radius of wheels
+# L: lateral distance between wheels
+def cost(Xi,Yi,Thetai,UL,UR,r,L):
+    dt = 0.1
+    t = 0
+    Xn = Xi
+    Yn = Yi
+    Thetan = PI * Thetai / 180
+    D = 0
+    while t < 1:
+        dd = 0.5 * r * (UL + UR) * dt
+        dXn = dd * cos(Thetan)
+        dYn = dd * sin(Thetan)
+        Xn += dXn
+        Yn += dYn
+        Thetan += ((r / L) * (UR - UL) * dt)
+        D += sqrt(dXn**2 + dYn**2)
+        t += dt
+    Thetan = 180 * Thetan / PI
+    return Xn, Yn, Thetan, D, t
 
 # A single state of the maze's search
 class MazeVertexNode(object):
@@ -193,6 +221,24 @@ class DoublyLinkNode(object):
         self.link_parent = None
         self.link_child = None
 
+# A collection of a couple of physical characteristics of the robot
+class RobotDescription(object):
+
+    # The wheel speed multipliers
+    wheel_speeds = None
+
+    # The wheel radius
+    r = None
+
+    # The lateral distance between the wheels
+    L = None
+
+    # Collect data about the robot
+    def __init__(self, wheel_speed_minor, wheel_speed_major, r, L):
+        self.wheel_speeds = (0, wheel_speed_minor, wheel_speed_major)
+        self.r = r
+        self.L = L
+
 # A pathfinding object which builds a representation of the underlying maze
 class Maze(object):
 
@@ -200,12 +246,12 @@ class Maze(object):
     obst = None
 
     # The wheel speed multiplier
-    wheel_speed_magnitude = None
+    robo_desc = None
 
     # Build the graph with the list of semi-algebraic models
-    def __init__(self, clearance, wheel_speed_magnitude):
+    def __init__(self, clearance, wheel_speed_minor, wheel_speed_major, r, L):
         self.obst = setup_graph(clearance)  # creates the obstacle space. 0 for obstacle, 1 for open space
-        self.wheel_speed_magnitude = wheel_speed_magnitude
+        self.robo_desc = RobotDescription(wheel_speed_minor, wheel_speed_major, r, L)
 
     # Determine if a coordinate pair is in a traversable portion of the maze
     def is_in_board(self, j, i):
@@ -262,9 +308,9 @@ class Maze(object):
             # Get each of the neighbors of this node by looping through the five possible actions
             nj, ni, orientation = np
             for Uln,Urn in MazeVertexNode.WHEEL_SPEEDS_TO_NEIGHBORS:
-                Ul = Uln*self.wheel_speed_magnitude
-                Ur = Urn*self.wheel_speed_magnitude
-                ii, jj, ori, nD, dt = cost(ni, nj, orientation*BOARD_O, Ul, Ur)
+                Ul = self.robo_desc.wheel_speeds[Uln]
+                Ur = self.robo_desc.wheel_speeds[Urn]
+                ii, jj, ori, nD, dt = cost(ni, nj, orientation*BOARD_O, Ul, Ur, self.robo_desc.r, self.robo_desc.L)
                 ii = int(ii)
                 jj = int(jj)
                 ori = (int(ori) % 360) // BOARD_O
@@ -386,8 +432,8 @@ def cleanly_handle_plan_request(msg, maze, pub):
 def main():
     # Capture required user input
     my_sargv = rospy.myargv(argv=sargv)
-    assert(len(my_sargv) == 3)
-    c_str, w_str = my_sargv[1:]
+    assert(len(my_sargv) == 4)
+    c_str, w1_str, w2_str = my_sargv[1:]
 
     clearance = None
     try:
@@ -399,23 +445,30 @@ def main():
         print "Please enter the clearance as a non-negative integer."
         return
 
-    wheel_speed_magnitude = None
+    wheel_speed_minor = None
+    wheel_speed_major = None
     try:
-        wheel_speed_magnitude = int(w_str)
+        wheel_speed_minor = int(w1_str)
+        wheel_speed_major = int(w2_str)
     except:
-        print "Please enter the robot radius as an integer."
+        print "Please enter the wheel velocities as an integer."
         return
-    if wheel_speed_magnitude <= 0:
+    if (wheel_speed_minor <= 0) or (wheel_speed_major <= 0):
         print "Please enter the robot radius as a positive integer."
         return
 
+    # Init ROS elements and get parameters
+    rospy.init_node(ROS_NODE_NAME)
+    robot_r = get_rosparam("/nhr/robot_description/r")
+    robot_L = get_rosparam("/nhr/robot_description/L")
+    assert((robot_r != None) and (robot_L != None))
+
     # Build the maze and underlying graph object
     print "Starting maze generation..."
-    maze = Maze(clearance, wheel_speed_magnitude)
+    maze = Maze(clearance, wheel_speed_minor, wheel_speed_major, robot_r, robot_L)
     print "Done, waiting for path planning requests."
 
-    # Init ROS elements
-    rospy.init_node(ROS_NODE_NAME)
+    # Init ROS pub and sub
     path_pub = rospy.Publisher(
         "/nhr/path",
         Path,
@@ -427,6 +480,7 @@ def main():
         lambda m: cleanly_handle_plan_request(m, maze, path_pub),
         queue_size=1
     )
+
     rospy.spin()
 
 if __name__ == "__main__":
