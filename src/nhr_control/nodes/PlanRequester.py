@@ -20,14 +20,15 @@ def handle_path(msg):
 
 def main():
     # Capture required user input
-    assert(len(sargv) == 5)
+    my_sargv = rospy.myargv(argv=sargv)
+    assert(len(my_sargv) == 5)
 
     ii = None; ij = None; fi = None; fj = None
     try:
-        ii = float(sargv[1])
-        ij = float(sargv[2])
-        fi = float(sargv[3])
-        fj = float(sargv[4])
+        ii = float(my_sargv[1])
+        ij = float(my_sargv[2])
+        fi = float(my_sargv[3])
+        fj = float(my_sargv[4])
     except:
         print "Inputs must be numbers."
         return

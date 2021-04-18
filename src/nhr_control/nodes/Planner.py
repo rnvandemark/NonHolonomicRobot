@@ -381,8 +381,9 @@ def cleanly_handle_plan_request(msg, maze, pub):
 
 def main():
     # Capture required user input
-    assert(len(sargv) == 3)
-    c_str, w_str = sargv[1:]
+    my_sargv = rospy.myargv(argv=sargv)
+    assert(len(my_sargv) == 3)
+    c_str, w_str = my_sargv[1:]
 
     clearance = None
     try:
