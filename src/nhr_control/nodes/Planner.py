@@ -178,7 +178,7 @@ class MazeVertexNode(object):
     # The current tentative distance from this node to the goal, given some heuristic
     distF = None
 
-    # The wheel speeds and time duration used to visit this node (dt, theta_l, theta_r)
+    # The wheel speeds and time duration used to visit this node (theta_l, theta_r, dt)
     twist_elements_to_here = None
 
     # The actual position, non-truncated
