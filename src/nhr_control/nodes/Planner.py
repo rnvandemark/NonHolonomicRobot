@@ -323,9 +323,6 @@ class Maze(object):
                     # This node was already visited and removed, continue to the next neighbor
                     continue
 
-                # (Re)set the twist elements used to get here
-                neighbor_node.vertex_node.twist_elements_to_here = (Ul, Ur, dt)
-
                 # Add the position of this neighbor to visualize later
                 moves_to_neighbors.append(MoveCommand(
                     left_wheel_speed=Ul,
@@ -341,6 +338,7 @@ class Maze(object):
                     neighbor_node.vertex_node.distG = node_distG
                     neighbor_node.vertex_node.distF = node_distG + self.h(neighbor, goal)
                     neighbor_node.vertex_node.parent = node.vertex_node
+                    neighbor_node.vertex_node.twist_elements_to_here = (Ul, Ur, dt)
                     # Do a less costly sort by simply moving the neighbor node in the list
                     # If early on in the program, just search from right to left
                     potential_new_link_parent = node_to_visit
