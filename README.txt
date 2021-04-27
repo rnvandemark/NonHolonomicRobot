@@ -1,17 +1,16 @@
 # NonHolonomicRobot
 
-Example to run system (execute each of these in a separate terminal):
+// Launch ROS master and the path-planner node
+roslaunch nhr_sim main.launch
 
-// ROS master
-roscore
+// There are two optional arguments for main.launch:
+// do_viz - run the visualizer node, which renders a video of any successfully generated path
+// do_gazebo - run Gazebo and the turtlebot3 burger to execute the generated path
 
-// Create a planner, can handle multiple plan requests in its lifetime
-// clearance := 0, minor wheel speed := 0
-rosrun nhr_control Planner.py 0 50
+// For example, the following runs the visualizer and gazebo:
+roslaunch nhr_sim main.launch do_viz:=1 do_gazebo:=1
 
-// Have a node listen for paths planned to render a video of it (optional)
-rosrun nhr_control Visualizer.py
-
-// Request a path from start to finish
-// start := (y=0.3,x=0.4), goal := (y=9.0,x=9.0)
-rosrun nhr_control PlanRequester.py 0.3 0.4 9 9
+// After having executed one of the above launch configurations, request a path
+// from start to finish with specified wheel speeds
+// Here: start == (x=6.0,y=8.2), goal == (x=9.0,y=9.0), min,max wheel speeds == (10,15)
+rosrun nhr_control PlanRequester.py 6 8.2 9 9 10 15

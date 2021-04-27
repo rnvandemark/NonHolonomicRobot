@@ -62,7 +62,6 @@ def quad_check(x0, y0, quad):
     else:
         return True  # point is not in obstacle space
 
-
 def line_check(x0, y0, x1, y1, x2, y2, UD, LR):
     # UD = True  if object is bottom side of line
     # UD = False if object is top    side of line
@@ -83,7 +82,6 @@ def line_check(x0, y0, x1, y1, x2, y2, UD, LR):
         else:
             return False  # False means point is not within the restriced half-plane
 
-
 def elip_check(x0, y0, elip):
     # extract dimensions out of elip list
     xc = elip[0]
@@ -95,7 +93,6 @@ def elip_check(x0, y0, elip):
         return False  # point is in obstacle space
     else:
         return True  # point is not in obstacle space
-
 
 def setup_graph(clearance, point_robot = True):
     obst = np.ones((GRID_H,GRID_W))
@@ -142,7 +139,7 @@ def cost(Xi,Yi,Thetai,UL,UR,r,L):
     Yn = Yi
     Thetan = PI * Thetai / 180
     D = 0
-    while t < 1:
+    while t < 0.95:
         dd = 0.5 * r * (UL + UR) * dt
         dXn = dd * cos(Thetan)
         dYn = dd * sin(Thetan)
@@ -184,6 +181,9 @@ class MazeVertexNode(object):
     # The wheel speeds and time duration used to visit this node (dt, theta_l, theta_r)
     twist_elements_to_here = None
 
+    # The actual position, non-truncated
+    actual_position = None
+
     # Constructor, given all values
     def __init__(self, parent, position, distG, distF):
         self.parent = parent
@@ -191,6 +191,7 @@ class MazeVertexNode(object):
         self.distG = distG
         self.distF = distF
         self.twist_elements_to_here = (0,0,0)
+        self.actual_position = None
 
 # A link in a priorty queue chain
 class DoublyLinkNode(object):
@@ -204,13 +205,28 @@ class DoublyLinkNode(object):
     # The right / higher priority DoublyLinkNode
     link_child = None
 
+    # Special flag to ID if this is the left end of the chain
+    is_left = None
+
+    # Special flag to ID if this is the right end of the chain
+    is_right = None
+
     # Create a link with a vertex node and parent
-    def __init__(self, vertex_node, link_parent):
+    def __init__(self, vertex_node):
         self.vertex_node = vertex_node
-        self.link_parent = link_parent
+        self.link_parent = None
         self.link_child = None
-        if self.link_parent != None:
-            self.link_parent.link_child = self
+        self.is_left = False
+        self.is_right = False
+
+    # Insert this node as a child to another
+    # Assumes new_parent is not null
+    def insert_as_child_to(self, new_parent):
+        self.link_parent = new_parent
+        self.link_child = new_parent.link_child
+        if new_parent.link_child is not None:
+            new_parent.link_child.link_parent = self
+        new_parent.link_child = self
 
     # Helper function to remove this node from a chain it's in
     def remove_from_chain(self):
@@ -220,6 +236,18 @@ class DoublyLinkNode(object):
             self.link_child.link_parent = self.link_parent
         self.link_parent = None
         self.link_child = None
+
+    @staticmethod
+    def get_left_inst():
+        dln = DoublyLinkNode(None)
+        dln.is_left = True
+        return dln
+
+    @staticmethod
+    def get_right_inst():
+        dln = DoublyLinkNode(None)
+        dln.is_right = True
+        return dln
 
 # A collection of a couple of physical characteristics of the robot
 class RobotDescription(object):
@@ -268,24 +296,34 @@ class Maze(object):
 
     # Run A* between a start and goal point, using a forward step length
     def astar(self, start, goal, minor_wheel_speed, major_wheel_speed):
-        self.robo_desc.wheel_speeds = (0, minor_wheel_speed, major_wheel_speed)
+        self.robo_desc.wheel_speeds = (
+            int(minor_wheel_speed * 0.75),
+            minor_wheel_speed,
+            major_wheel_speed
+        )
 
-        link_node_indices = {}
-        prev_n = None
+        all_maze_vertex_nodes_map = {}
         for j in range(GRID_H):
             for i in range(GRID_W):
                 if self.is_in_board(j, i):
                     for o in range(GRID_O):
-                        v = (j,i,o)
-                        if v != start:
-                            n = DoublyLinkNode(MazeVertexNode(None, v, 999999999, 999999999), prev_n)
-                            link_node_indices[v] = n
-                            prev_n = n
-        start_node = DoublyLinkNode(MazeVertexNode(None, start, 0, self.h(start, goal)), prev_n)
-        link_node_indices[start] = start_node
+                        v = (j,i,o); a = None; b = None
+                        if v == start:
+                            a = 0
+                            b = self.h(start, goal)
+                        else:
+                            a = 999999999
+                            b = 999999999
+                        all_maze_vertex_nodes_map[v] = MazeVertexNode(None, v, a, b)
 
-        # The next node to process in the priority queue, initialized to be the start node
-        node_to_visit = start_node
+        # Create the left end of the chain, the right end, and the sole initial link as the start
+        chain_left_node = DoublyLinkNode.get_left_inst()
+        chain_right_node = DoublyLinkNode.get_right_inst()
+        chain_right_node.insert_as_child_to(chain_left_node)
+        start_node = DoublyLinkNode(all_maze_vertex_nodes_map[start])
+        start_node.vertex_node.actual_position = start
+        start_node.insert_as_child_to(chain_left_node)
+        chain_links_map = {start:start_node}
 
         # Track the nodes that were visited in the order they were, to visualize later
         nodes_visited = []
@@ -293,34 +331,51 @@ class Maze(object):
         # Start the main part of the algorithm, tracking the node that can be used to recover the path
         final_node = None
         idx = 0
-        while (final_node is None) and (node_to_visit != None):
+        while (final_node is None) and (len(chain_links_map) != 0):
+            # Visit the node with the lowest fScore, which is highest in the queue
+            visiting_link = chain_right_node.link_parent
+
             # Essentially, mark this node as "visited" and capture its position
-            node = node_to_visit
-            np = node.vertex_node.position
-            del link_node_indices[np]
+            visiting_link.remove_from_chain()
+            np = visiting_link.vertex_node.position
+            del chain_links_map[np]
+            del all_maze_vertex_nodes_map[np]
+            np = visiting_link.vertex_node.actual_position
 
             # Check if this is the goal position
             if self.dist(np, goal) <= 2:
-                final_node = node.vertex_node
+                final_node = visiting_link.vertex_node
                 continue
 
             # Track the moves used to explore the neighbors
             moves_to_neighbors = []
 
-            # Get each of the neighbors of this node by looping through the five possible actions
+            # Get each of the neighbors of the node being visited by looping through the five possible actions
             nj, ni, orientation = np
             for Uln,Urn in MazeVertexNode.WHEEL_SPEEDS_TO_NEIGHBORS:
                 Ul = self.robo_desc.wheel_speeds[Uln]
                 Ur = self.robo_desc.wheel_speeds[Urn]
-                ii, jj, ori, nD, dt = cost(ni, nj, orientation*BOARD_O, Ul, Ur, self.robo_desc.r, self.robo_desc.L)
-                ii = int(ii)
-                jj = int(jj)
-                ori = (int(ori) % 360) // BOARD_O
-                neighbor = (jj,ii,ori)
+                actual_ii, actual_jj, actual_ori, nD, dt = cost(
+                   float(ni)/GRID_D,
+                   float(nj)/GRID_D,
+                   orientation,
+                   Ul,
+                   Ur,
+                   self.robo_desc.r,
+                   self.robo_desc.L
+                )
+                actual_ori = actual_ori % 360
+                actual_ii *= GRID_D
+                actual_jj *= GRID_D
+                ii = int(actual_ii)
+                jj = int(actual_jj)
+                ori = int(actual_ori / BOARD_O)
+                neighbor_position = (jj,ii,ori)
 
-                neighbor_node = link_node_indices.get(neighbor, None)
+                neighbor_node = all_maze_vertex_nodes_map.get(neighbor_position, None)
                 if neighbor_node is None:
-                    # This node was already visited and removed, continue to the next neighbor
+                    # This position is not an acceptable position
+                    # Either it's been visited, it's outside the bounds, or it's in an obstacle
                     continue
 
                 # Add the position of this neighbor to visualize later
@@ -331,47 +386,43 @@ class Maze(object):
                 ))
 
                 # Calculate the adjusted distance
-                node_distG = node.vertex_node.distG + nD
-                if node_distG < neighbor_node.vertex_node.distG:
+                node_distG = visiting_link.vertex_node.distG + nD
+                if node_distG < neighbor_node.distG:
                     # Set this node as this neighbor's shortest path
-                    neighbor_node.remove_from_chain()
-                    neighbor_node.vertex_node.distG = node_distG
-                    neighbor_node.vertex_node.distF = node_distG + self.h(neighbor, goal)
-                    neighbor_node.vertex_node.parent = node.vertex_node
-                    neighbor_node.vertex_node.twist_elements_to_here = (Ul, Ur, dt)
-                    # Do a less costly sort by simply moving the neighbor node in the list
-                    # If early on in the program, just search from right to left
-                    potential_new_link_parent = node_to_visit
-                    while True:
-                        if potential_new_link_parent.vertex_node.distF >= neighbor_node.vertex_node.distF:
-                            # Found where the node should be placed in the chain, insert it
-                            neighbor_node.link_parent = potential_new_link_parent
-                            neighbor_node.link_child = potential_new_link_parent.link_child
-                            if potential_new_link_parent.link_child != None:
-                                potential_new_link_parent.link_child.link_parent = neighbor_node
-                            potential_new_link_parent.link_child = neighbor_node
-                            break
-                        elif potential_new_link_parent.link_parent is None:
-                            # This node becomes the new end (lowest priority)
-                            neighbor_node.link_parent = None
-                            neighbor_node.link_child = potential_new_link_parent
-                            potential_new_link_parent.link_parent = neighbor_node
-                            break
-                        else:
-                            # Have not found the end yet
-                            potential_new_link_parent = potential_new_link_parent.link_parent
+                    neighbor_node.distG = node_distG
+                    neighbor_node.distF = node_distG + self.h(neighbor_position, goal)
+                    neighbor_node.parent = visiting_link.vertex_node
+                    neighbor_node.twist_elements_to_here = (Ul, Ur, dt)
+                    neighbor_node.actual_position = (actual_jj,actual_ii,actual_ori)
 
-            # Add this position as having visited each of these neighbors
+                    # Do a less costly sort by simply moving the neighbor node in the priority queue
+                    if neighbor_position not in chain_links_map:
+                        # Create a link in the chain and add it to the hashmap, to locate by position
+                        neighbor_link = DoublyLinkNode(neighbor_node)
+                        chain_links_map[neighbor_position] = neighbor_link
+                        # Start the search from the right end / highest priority link in the chain
+                        potential_new_link_parent = chain_right_node.link_parent
+                        continue_prioritize = True
+                        while continue_prioritize:
+                            if potential_new_link_parent.is_left:
+                                # The entire open set has been searched
+                                neighbor_link.insert_as_child_to(chain_left_node)
+                                continue_prioritize = False
+                            elif potential_new_link_parent.vertex_node.distF >= neighbor_node.distF:
+                                # Found the point in the chain where the parent has a higher fscore but child has a lower on
+                                neighbor_link.insert_as_child_to(potential_new_link_parent)
+                                continue_prioritize = False
+                            else:
+                                # Have not finished searching yet
+                                potential_new_link_parent = potential_new_link_parent.link_parent
+                            #raw_input("Press Enter to continue...")
+
             nodes_visited.append(NeighborsPose2D(
-                position=Pose2D(x=ni, y=nj, theta=orientation*BOARD_O),
+                position=Pose2D(x=ni, y=nj, theta=orientation),
                 moves_to_neighbors=moves_to_neighbors
             ))
             idx = idx + 1
             printr("Planning{0}".format("." * (idx // 2000)))
-
-            # Continue to the next node
-            node_to_visit = node_to_visit.link_parent
-            node_to_visit.link_child = None
 
         print
         return final_node, nodes_visited
@@ -405,8 +456,11 @@ def handle_plan_request(msg, maze, pub):
         backtrack_path = []
         n = final_node
         while n is not None:
+            if n.actual_position is None:
+                n = n.parent
+                continue
             backtrack_path.append(BacktrackNode(
-                position=Pose2D(x=n.position[1], y=n.position[0], theta=n.position[2]*BOARD_O),
+                position=Pose2D(x=n.actual_position[1], y=n.actual_position[0], theta=n.actual_position[2]),
                 has_move_cmd=(n.parent is not None),
                 move_cmd=MoveCommand(
                     left_wheel_speed=n.twist_elements_to_here[0],
@@ -419,7 +473,6 @@ def handle_plan_request(msg, maze, pub):
         path_msg.success = (final_node is not None)
         path_msg.explored = nodes_visited
         path_msg.backtrack_path = backtrack_path
-#        visualize(final_node, nodes_visited)
     else:
         print "Failed to run A* with {0} => {1}".format(s, g)
 
