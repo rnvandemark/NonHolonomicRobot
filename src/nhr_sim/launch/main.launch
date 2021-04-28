@@ -1,6 +1,6 @@
 <launch>
-  <arg name="do_gazebo" default="0" />
-  <arg name="do_viz" default="0" />
+  <arg name="do_gazebo" default="1" />
+  <arg name="do_viz" default="1" />
 
   <arg name="clearance" default="0" />
 
