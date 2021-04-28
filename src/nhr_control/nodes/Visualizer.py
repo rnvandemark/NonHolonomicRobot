@@ -143,7 +143,7 @@ def handle_path(msg):
             img = draw_curve(img, p2d.position.x, p2d.position.y, p2d.position.theta, ul, ur, scl, (0, 0, 255))  # draws one move line
 
         # only write a fraction of the frames to keep video length down
-        if i % 10 == 0:
+        if i % 1 == 0:
             video.write(img)
 
     # draw the backtracking

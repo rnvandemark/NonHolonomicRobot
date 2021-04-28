@@ -56,11 +56,8 @@ def quad_check(x0, y0, quad):
     chk3 = line_check(x0, y0, x3, y3, x4, y4, True, True)
     chk4 = line_check(x0, y0, x4, y4, x1, y1, True, False)
 
-    # check if point is within resitected half place side of all lines --> in object
-    if chk1 and chk2 and chk3 and chk4:
-        return False  # point is in obstacle space
-    else:
-        return True  # point is not in obstacle space
+    # check if point is within restricted half place side of all lines --> in object
+    return not (chk1 and chk2 and chk3 and chk4) # if True, point is not in obstacle space
 
 def line_check(x0, y0, x1, y1, x2, y2, UD, LR):
     # UD = True  if object is bottom side of line
@@ -68,44 +65,33 @@ def line_check(x0, y0, x1, y1, x2, y2, UD, LR):
     # LR = True  if object is left   side of line
     # LR = False if object is right  side of line
     if x2 != x1:  # not vertical line
-        m = (y2 - y1) / (x2 - x1)  # get the slope
+        m = (y2 - y1) / float(x2 - x1)  # get the slope
         b = y1 - m * x1  # get the intercept
-        # check if point is within the restriced half-plane
-        if (y0 >= m * x0 + b and not UD) or (y0 <= m * x0 + b and UD):
-            return True  # True means point is within the restriced half-plane
-        else:
-            return False  # False means point is not within the restriced half-plane
-
+        # check if point is within the restricted half-plane
+        return (y0 >= m * x0 + b and not UD) or (y0 <= m * x0 + b and UD) # if True, point is within the restricted half-plane
     else:  # x2 == x1 --> vertical line
-        if (x0 >= x1 and not LR) or (x0 <= x1 and LR):
-            return True  # True means point is within the restriced half-plane
-        else:
-            return False  # False means point is not within the restriced half-plane
+        return (x0 >= x1 and not LR) or (x0 <= x1 and LR) # if True, point is within the restricted half-plane
 
 def elip_check(x0, y0, elip):
     # extract dimensions out of elip list
     xc = elip[0]
     yc = elip[1]
-    a2 = elip[2]**2  # horizontal dimension
-    b2 = elip[3]**2  # vertical dimension
-
-    if (x0 - xc)**2 / a2 + (y0 - yc)**2 / b2 <= 1:  # check if point is within ellipse
-        return False  # point is in obstacle space
-    else:
-        return True  # point is not in obstacle space
+    a2 = elip[2] ** 2  # horizontal dimension
+    b2 = elip[3] ** 2  # vertical dimension
+    return (x0 - xc) ** 2 / float(a2) + (y0 - yc) ** 2 / float(b2) > 1 # if True, point is in obstacle space
 
 def setup_graph(clearance, point_robot = True):
-    obst = np.ones((GRID_H,GRID_W))
+    obst = np.ones((GRID_H, GRID_W))
     for x in range(GRID_W):
         for y in range(GRID_H):
             for quad in quads:  # check quads
                 if not quad_check(x, y, quad):  # see if point is near the quad
-                    obst[GRID_H-y, x] = 0
+                    obst[GRID_H - y - 1, x] = 0
                     break
-    
+
             for elip in elips:  # check elips
                 if not elip_check(x, y, elip):  # see if point is near the elip
-                    obst[GRID_H-y, x] = 0
+                    obst[GRID_H - y - 1, x] = 0
                     break
                 
     if not point_robot:  # used to override the expansion for the visualization step
@@ -119,7 +105,7 @@ def setup_graph(clearance, point_robot = True):
                 for j in range(y-r, y+r):
                     if 0 <= i < GRID_W and 0 <= j < GRID_H:  # makes sure point is within bounds
                         if obst[j, i] == 0 and sqrt((x-i)**2+(y-j)**2) < r:  # if window point is in obstacle
-                            newObst[y, x] = 0
+                            newObst[GRID_H - y, x] = 0
                             break
                 else:
                     continue
