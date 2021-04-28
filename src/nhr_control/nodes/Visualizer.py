@@ -78,10 +78,6 @@ def setup_graph():
 
     return obst
 
-xn=60
-yn=80
-thetas=0
-
 def draw_curve(img, xn, yn, thetas, ul, ur, scl, color):
     r = 0.038  # wheel radius
     L = 0.354  # wheel base
@@ -102,9 +98,6 @@ def draw_curve(img, xn, yn, thetas, ul, ur, scl, color):
         xn += 0.5 * r * (ul + ur) * cos(theta_rad) * dt  # goal point x
         yn += 0.5 * r * (ul + ur) * sin(theta_rad) * dt  # goal point y
         theta_rad += (r / float(L)) * (ur - ul) * dt  # goal theta
-    # xn*=10
-    # yn*=10
-    # print(xn, yn, theta_rad*180.0/PI)
         img = cv2.line(img, (int(xs*scl*10), int(GRID_H*scl - ys*scl*10)), (int(xn*scl*10), int(GRID_H*scl - yn*scl*10)), color)  # draw the small line, with scaled points
 
     return img
@@ -130,12 +123,9 @@ def handle_path(msg):
     img[:, :, 1] = temp
     img[:, :, 2] = temp
     img = cv2.resize(img, video_size, interpolation=cv2.INTER_NEAREST)
-    # print("Created img {0} for video {1}".format(img.shape, video_size))
 
     # draw the explored nodes
     for i, p2d in enumerate(msg.explored):
-        # print(i, ": ", "x,y,o = ", p2d.position.x, p2d.position.y, p2d.position.theta)
-        # rospy.sleep(0.1)
         # draw each wheel speed action that comes off start node
         for action in p2d.moves_to_neighbors:
             ul = action.left_wheel_speed
