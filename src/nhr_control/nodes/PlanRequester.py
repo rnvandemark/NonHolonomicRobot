@@ -6,7 +6,7 @@ from geometry_msgs.msg import Pose2D, Twist, Pose, Point, Quaternion
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
 from sys import argv as sargv
-from math import sin, cos, pi as PI
+from math import pi as PI
 
 ROS_NODE_NAME = "nhr_plan_requester"
 
@@ -17,59 +17,46 @@ def get_rosparam(name):
         value = rospy.get_param(name)
     return value
 
-# Helper function to convert from degrees to radians
-def deg2rad(deg):
-    return PI * deg / 180
-
-# Calculate the linear velocity of the bot in x and y
-def calc_lin_vel_yx(th, Ul, Ur, r):
-    dd = (r/2) * (Ul+Ur)
-    return dd*sin(th), dd*cos(th)
-
-# Calculate the angular twist of the bot
-def calc_ang_vel_z(Ul, Ur, r, L):
-    return (r/L) * (Ur-Ul)
-
 # Populate a twist message given motion of the wheels
-def get_twist_from(th, Ul, Ur, r, L):
+def get_twist_from(Ul, Ur, r, L):
     twist = Twist()
-    dy, dx = calc_lin_vel_yx(th, Ul, Ur, r)
-    twist.linear.x = dx
-    twist.linear.y = dy
-    twist.angular.z = calc_ang_vel_z(Ul, Ur, r, L)
+    twist.linear.x  = (r/2) * (Ul+Ur)
+    twist.angular.z = (r/L) * (Ur-Ul)
     return twist
 
 # Publish a series of twist messages given a path to follow
 def handle_path(msg, wheel_radius, lateral_separation, gazebo_model_cli, twist_pub):
-    print " => ".join("({0},{1},{2})".format(p.position.y,p.position.x,p.position.theta) for p in msg.backtrack_path)
-    move_commands = [(deg2rad(p.position.theta),p.move_cmd) for p in reversed(msg.backtrack_path) if p.has_move_cmd]
+    if not msg.success:
+        print "Plan failed!"
 
+    # Issue service request to manually set the position/orientation of the turtlebot with no twist
     srv_response = gazebo_model_cli(model_state=ModelState(
         model_name="turtlebot3_burger",
         pose=Pose(
             position=Point(
-                x=(msg.request.init_position.x)-5, # Recenter
-                y=(msg.request.init_position.y)-5, # Recenter
+                x=(msg.request.init_position.x)-5, # Recenter, as the origin is at (5,5)
+                y=(msg.request.init_position.y)-5, # Recenter, as the origin is at (5,5)
                 z=0
             ),
             orientation=Quaternion(x=0,y=0,z=0,w=1) # Identity quaternion
         ),
         twist=Twist(),
-        reference_frame="world"
+        reference_frame="world" # "world" or "map" is recognized as the 'world' frame
     ))
     assert(srv_response.success)
     rospy.sleep(1)
 
-    for th,cmd in move_commands:
+    # Iterate through the generated move commands (reverse the backtrack path to move forward)
+    move_commands = (p.move_cmd for p in reversed(msg.backtrack_path) if p.has_move_cmd)
+    for cmd in move_commands:
         twist_pub.publish(get_twist_from(
-            th,
             cmd.left_wheel_speed,
             cmd.right_wheel_speed,
             wheel_radius,
             lateral_separation
         ))
-        rospy.sleep(cmd.time_elapsed)
-    twist_pub.publish(Twist())
+        rospy.sleep(cmd.time_elapsed) # Wait for the amount of time that the bot should move
+    twist_pub.publish(Twist()) # Publish 0 twist to stop the bot
     rospy.signal_shutdown("Received path, ready for clean shutdown.")
 
 def main():
